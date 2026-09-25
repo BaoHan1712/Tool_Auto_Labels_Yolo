@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import random
 import yaml
@@ -11,6 +12,15 @@ from PIL import Image
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
+
+
+def resource_path(relative_path):
+    """Lấy đường dẫn tuyệt đối đến tài nguyên, hoạt động cả khi chạy code thường và khi đóng gói .exe"""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 
 # -----------------------------------------------------------------
@@ -88,7 +98,6 @@ class SingleAugmentationEngine:
             crop_ratio = 1.0 - (intensity * 0.35)
             nw, nh = int(w * crop_ratio), int(h * crop_ratio)
             
-            # Preview thì cắt ở tâm, chạy Batch thực tế thì cắt ngẫu nhiên các góc
             if is_preview:
                 cx = (w - nw) // 2
                 cy = (h - nh) // 2
@@ -251,14 +260,14 @@ class AugmentationModal(ctk.CTkToplevel):
 
 
 # -----------------------------------------------------------------
-# GIAO DIỆN CHÍNH (ĐƯỢC THIẾT KẾ GỌN GÀNG, CAO 620PX)
+# GIAO DIỆN CHÍNH
 # -----------------------------------------------------------------
 class YOLOAugmentationStudioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Roboflow-style YOLO Augmentation Studio")
-        self.geometry("820x620")
-        self.resizable(False, False)
+        self.geometry("1160x700")
+        self.resizable(True, True)
 
         self.data_dir = ""
         self.class_names = []
@@ -286,18 +295,55 @@ class YOLOAugmentationStudioApp(ctk.CTk):
         self.status_labels = {}
         self._setup_ui()
 
+    def _load_image(self, file_name, size):
+        """Hàm load ảnh CTkImage an toàn hỗ trợ PyInstaller."""
+        full_path = resource_path(file_name)
+        if not os.path.exists(full_path):
+            full_path = file_name
+
+        if os.path.exists(full_path):
+            try:
+                pil_img = Image.open(full_path)
+                return ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=size)
+            except Exception:
+                pass
+        return None
+
     def _setup_ui(self):
-        top_bar = ctk.CTkFrame(self)
-        top_bar.pack(fill="x", padx=15, pady=(10, 5))
+        # Header Tiêu đề
+        title_label = ctk.CTkLabel(
+            self, 
+            text="HỆ THỐNG TĂNG CƯỜNG DỮ LIỆU ẢNH (DATA AUGMENTATION) - YOLO", 
+            font=ctk.CTkFont(size=21, weight="bold")
+        )
+        title_label.pack(padx=20, pady=(15, 10))
 
-        ctk.CTkLabel(top_bar, text="done_labels:", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=8, pady=8, sticky="w")
-        self.entry_dir = ctk.CTkEntry(top_bar, width=440, placeholder_text="Chọn thư mục chứa done_labels...")
-        self.entry_dir.grid(row=0, column=1, padx=5, pady=8)
+        # Khung chứa chính chia 2 cột: Cột trái (Chức năng), Cột phải (Tác giả)
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=15, pady=5)
+
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_columnconfigure(1, weight=0)
+        container.grid_rowconfigure(0, weight=1)
+
+        # ---------------- CỘT TRÁI (BẢNG ĐIỀU KHIỂN & BỘ AUGMENTATION) ----------------
+        left_frame = ctk.CTkFrame(container, fg_color="transparent")
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=0)
+
+        # Thanh chọn folder done_labels
+        top_bar = ctk.CTkFrame(left_frame)
+        top_bar.pack(fill="x", pady=(0, 8))
+        top_bar.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(top_bar, text="done_labels:", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=8, sticky="w")
+        self.entry_dir = ctk.CTkEntry(top_bar, placeholder_text="Chọn thư mục chứa done_labels...")
+        self.entry_dir.grid(row=0, column=1, padx=5, pady=8, sticky="ew")
         ctk.CTkButton(top_bar, text="Duyệt...", width=80, command=self._browse_dir).grid(row=0, column=2, padx=5, pady=8)
-        ctk.CTkButton(top_bar, text="Đổi ảnh mẫu", width=95, fg_color="#37474F", command=self._pick_sample).grid(row=0, column=3, padx=5, pady=8)
+        ctk.CTkButton(top_bar, text="Đổi ảnh mẫu", width=95, fg_color="#37474F", hover_color="#263238", command=self._pick_sample).grid(row=0, column=3, padx=10, pady=8)
 
-        list_frame = ctk.CTkScrollableFrame(self, height=330, label_text="DANH SÁCH CÁC BỘ TĂNG CƯỜNG (CHỌN TỪNG LOẠI ĐỂ CẤU HÌNH)")
-        list_frame.pack(fill="x", padx=15, pady=5)
+        # Danh sách cấu hình các bộ lọc tăng cường
+        list_frame = ctk.CTkScrollableFrame(left_frame, height=360, label_text="DANH SÁCH CÁC BỘ TĂNG CƯỜNG (CHỌN TỪNG LOẠI ĐỂ CẤU HÌNH)")
+        list_frame.pack(fill="both", expand=True, pady=5)
 
         for key, name, desc in self.aug_metadata:
             card = ctk.CTkFrame(list_frame)
@@ -308,15 +354,16 @@ class YOLOAugmentationStudioApp(ctk.CTk):
             ctk.CTkLabel(info_col, text=name, font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w")
             ctk.CTkLabel(info_col, text=desc, font=ctk.CTkFont(size=11), text_color="gray70").pack(anchor="w")
 
-            status_lbl = ctk.CTkLabel(card, text="Trạng thái: Chưa chọn (0%)", width=180, font=ctk.CTkFont(size=12))
+            status_lbl = ctk.CTkLabel(card, text="Trạng thái: Chưa chọn (0%)", width=170, font=ctk.CTkFont(size=12))
             status_lbl.pack(side="left", padx=10)
             self.status_labels[key] = status_lbl
 
-            btn_cfg = ctk.CTkButton(card, text="Tùy biến %", width=100, command=lambda k=key, n=name: self._open_modal(k, n))
+            btn_cfg = ctk.CTkButton(card, text="Tùy biến %", width=95, command=lambda k=key, n=name: self._open_modal(k, n))
             btn_cfg.pack(side="right", padx=10, pady=8)
 
-        bottom_frame = ctk.CTkFrame(self)
-        bottom_frame.pack(fill="x", padx=15, pady=5)
+        # Khung điều khiển thực thi
+        bottom_frame = ctk.CTkFrame(left_frame)
+        bottom_frame.pack(fill="x", pady=8)
 
         ctk.CTkLabel(bottom_frame, text="Nhân số lượng ảnh lên x").pack(side="left", padx=(15, 5), pady=8)
         self.cmb_mult = ctk.CTkComboBox(bottom_frame, values=["1", "2", "3", "5"], width=75)
@@ -326,16 +373,73 @@ class YOLOAugmentationStudioApp(ctk.CTk):
         self.lbl_selected_summary = ctk.CTkLabel(bottom_frame, text="Đã chọn: 0 loại", text_color="#64B5F6", font=ctk.CTkFont(weight="bold"))
         self.lbl_selected_summary.pack(side="left", padx=15)
 
-        self.btn_run = ctk.CTkButton(bottom_frame, text="TẠO TOÀN BỘ DATASET", fg_color="#1E88E5", hover_color="#1565C0",
-                                     font=ctk.CTkFont(size=13, weight="bold"), width=190, command=self._start_batch_thread)
+        self.btn_run = ctk.CTkButton(
+            bottom_frame, 
+            text="TẠO TOÀN BỘ DATASET", 
+            fg_color="#1E88E5", 
+            hover_color="#1565C0",
+            font=ctk.CTkFont(size=13, weight="bold"), 
+            width=190, 
+            command=self._start_batch_thread
+        )
         self.btn_run.pack(side="right", padx=10, pady=8)
 
-        self.progress_bar = ctk.CTkProgressBar(self)
-        self.progress_bar.pack(fill="x", padx=15, pady=(5, 2))
+        self.progress_bar = ctk.CTkProgressBar(left_frame)
+        self.progress_bar.pack(fill="x", pady=(4, 2))
         self.progress_bar.set(0)
 
-        self.lbl_status = ctk.CTkLabel(self, text="Vui lòng chọn thư mục done_labels để bắt đầu", text_color="gray70", font=ctk.CTkFont(size=11))
-        self.lbl_status.pack(anchor="w", padx=15, pady=(0, 5))
+        self.lbl_status = ctk.CTkLabel(left_frame, text="Vui lòng chọn thư mục done_labels để bắt đầu", text_color="gray70", font=ctk.CTkFont(size=11))
+        self.lbl_status.pack(anchor="w", pady=(0, 5))
+
+        # ---------------- CỘT PHẢI (THÔNG TIN TÁC GIẢ) ----------------
+        right_frame = ctk.CTkFrame(container, width=280)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0), pady=0)
+        right_frame.pack_propagate(False)
+
+        author_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        author_frame.pack(expand=True, fill="both", padx=15, pady=20)
+
+        # Tiêu đề mục tác giả
+        lbl_author_title = ctk.CTkLabel(
+            author_frame, 
+            text="TÁC GIẢ THỰC HIỆN", 
+            font=ctk.CTkFont(size=14, weight="bold"), 
+            text_color="gray75"
+        )
+        lbl_author_title.pack(pady=(15, 15))
+
+        # Ảnh tác giả tacgia.png
+        img_tacgia = self._load_image("tacgia.png", size=(200, 260))
+        if img_tacgia:
+            lbl_tacgia = ctk.CTkLabel(author_frame, image=img_tacgia, text="")
+        else:
+            lbl_tacgia = ctk.CTkLabel(
+                author_frame, 
+                text="[Ảnh: tacgia.png]", 
+                width=200, 
+                height=260, 
+                fg_color="#2B2B2B", 
+                corner_radius=8
+            )
+        lbl_tacgia.pack(pady=5)
+
+        # Tên tác giả
+        lbl_name = ctk.CTkLabel(
+            author_frame, 
+            text="Hàn Quốc Bảo", 
+            font=ctk.CTkFont(size=20, weight="bold"), 
+            text_color="#1E90FF"
+        )
+        lbl_name.pack(pady=(15, 2))
+
+        # Trường Đại học Lạc Hồng
+        lbl_school = ctk.CTkLabel(
+            author_frame, 
+            text="Đại học Lạc Hồng", 
+            font=ctk.CTkFont(size=15, weight="bold"), 
+            text_color="#FFB300"
+        )
+        lbl_school.pack(pady=(0, 10))
 
     def _browse_dir(self):
         path = filedialog.askdirectory(title="Chọn thư mục done_labels")
@@ -474,7 +578,7 @@ class YOLOAugmentationStudioApp(ctk.CTk):
                 cnt += 1
                 self.progress_bar.set(cnt / total)
 
-                # 2. Sinh ảnh tăng cường: DUYỆT QUA TỪNG LOẠI ĐÃ APPLY, MỖI LOẠI RA 'mult' ẢNH
+                # 2. Sinh ảnh tăng cường
                 for aug_key, intensity in active_augs.items():
                     variants = variant_names.get(aug_key, (None,))
                     for i in range(1, mult + 1):
@@ -496,7 +600,7 @@ class YOLOAugmentationStudioApp(ctk.CTk):
                             self.progress_bar.set(cnt / total)
                             self.lbl_status.configure(text=f"Đang sinh: {out_name}")
 
-            # Copy data.yaml
+            # Copy file data.yaml
             src_yaml = os.path.join(self.data_dir, "data.yaml")
             if os.path.exists(src_yaml):
                 shutil.copy2(src_yaml, os.path.join(out_root, "data.yaml"))

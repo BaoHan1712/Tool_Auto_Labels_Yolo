@@ -1,13 +1,24 @@
 import os
+import sys
 import shutil
 import random
 import yaml
 import threading
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+from PIL import Image
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
+
+
+def resource_path(relative_path):
+    """Lấy đường dẫn tuyệt đối đến tài nguyên, hỗ trợ cả khi chạy dev và qua PyInstaller."""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 
 class YOLODatasetSplitterApp(ctk.CTk):
@@ -15,70 +26,98 @@ class YOLODatasetSplitterApp(ctk.CTk):
         super().__init__()
 
         self.title("YOLO Dataset Splitter - Train / Valid / Test")
-        self.geometry("740x680")
-        self.resizable(False, False)
+        self.geometry("1160x700")
+        self.resizable(True, True)
 
         self.is_processing = False
         self._setup_ui()
 
+    def _load_image(self, file_name, size):
+        """Hàm load ảnh CTkImage an toàn hỗ trợ PyInstaller."""
+        full_path = resource_path(file_name)
+        if not os.path.exists(full_path):
+            full_path = file_name
+
+        if os.path.exists(full_path):
+            try:
+                pil_img = Image.open(full_path)
+                return ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=size)
+            except Exception:
+                pass
+        return None
+
     def _setup_ui(self):
-        # Header
+        # Header Tiêu đề
         title_label = ctk.CTkLabel(
             self, 
-            text="YOLO Dataset Splitter Tool", 
-            font=ctk.CTkFont(size=22, weight="bold")
+            text="HỆ THỐNG PHÂN CHIA TẬP DỮ LIỆU (SPLIT DATASET) - YOLO", 
+            font=ctk.CTkFont(size=21, weight="bold")
         )
         title_label.pack(padx=20, pady=(15, 10))
 
-        # Khung chọn thư mục
-        folder_frame = ctk.CTkFrame(self)
-        folder_frame.pack(padx=20, pady=5, fill="x")
+        # Main Container chia 2 cột: Trái (Thao tác/Log), Phải (Tác giả)
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=15, pady=5)
+
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_columnconfigure(1, weight=0)
+        container.grid_rowconfigure(0, weight=1)
+
+        # ---------------- CỘT TRÁI (BẢNG ĐIỀU KHIỂN & CHIA DATA) ----------------
+        left_frame = ctk.CTkFrame(container, fg_color="transparent")
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=0)
+
+        # Khung chọn thư mục nguồn & đích
+        folder_frame = ctk.CTkFrame(left_frame)
+        folder_frame.pack(fill="x", pady=(0, 8))
+        folder_frame.grid_columnconfigure(1, weight=1)
 
         # 1. Thư mục done_labels nguồn
         ctk.CTkLabel(folder_frame, text="Thư mục 'done_labels':", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=8, sticky="w")
-        self.entry_src = ctk.CTkEntry(folder_frame, width=420, placeholder_text="Chọn thư mục done_labels...")
-        self.entry_src.grid(row=0, column=1, padx=5, pady=8)
-        ctk.CTkButton(folder_frame, text="Duyệt", width=80, command=self._browse_src).grid(row=0, column=2, padx=10, pady=8)
+        self.entry_src = ctk.CTkEntry(folder_frame, placeholder_text="Chọn thư mục done_labels...")
+        self.entry_src.grid(row=0, column=1, padx=5, pady=8, sticky="ew")
+        ctk.CTkButton(folder_frame, text="Duyệt", width=75, command=self._browse_src).grid(row=0, column=2, padx=10, pady=8)
 
         # 2. Thư mục đích
         ctk.CTkLabel(folder_frame, text="Nơi lưu 'train_yolo_data':", font=ctk.CTkFont(weight="bold")).grid(row=1, column=0, padx=10, pady=8, sticky="w")
-        self.entry_dest = ctk.CTkEntry(folder_frame, width=420, placeholder_text="Chọn thư mục chứa đầu ra...")
-        self.entry_dest.grid(row=1, column=1, padx=5, pady=8)
-        ctk.CTkButton(folder_frame, text="Duyệt", width=80, command=self._browse_dest).grid(row=1, column=2, padx=10, pady=8)
+        self.entry_dest = ctk.CTkEntry(folder_frame, placeholder_text="Chọn thư mục chứa đầu ra...")
+        self.entry_dest.grid(row=1, column=1, padx=5, pady=8, sticky="ew")
+        ctk.CTkButton(folder_frame, text="Duyệt", width=75, command=self._browse_dest).grid(row=1, column=2, padx=10, pady=8)
 
         # Khung điều chỉnh tỷ lệ phần trăm
-        ratio_frame = ctk.CTkFrame(self)
-        ratio_frame.pack(padx=20, pady=10, fill="x")
+        ratio_frame = ctk.CTkFrame(left_frame)
+        ratio_frame.pack(fill="x", pady=5)
+        ratio_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(ratio_frame, text="Tùy chỉnh tỷ lệ phân chia (%)", font=ctk.CTkFont(size=14, weight="bold")).grid(row=0, column=0, columnspan=3, padx=10, pady=(8, 5), sticky="w")
 
         # Train ratio
         ctk.CTkLabel(ratio_frame, text="Train:").grid(row=1, column=0, padx=10, pady=5, sticky="w")
-        self.slider_train = ctk.CTkSlider(ratio_frame, from_=0, to=100, number_of_steps=100, width=380, command=self._update_ratio_labels)
-        self.slider_train.set(80)
-        self.slider_train.grid(row=1, column=1, padx=10, pady=5)
-        self.lbl_train = ctk.CTkLabel(ratio_frame, text="80%", width=50)
+        self.slider_train = ctk.CTkSlider(ratio_frame, from_=0, to=100, number_of_steps=100, command=self._update_ratio_labels)
+        self.slider_train.set(70)
+        self.slider_train.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
+        self.lbl_train = ctk.CTkLabel(ratio_frame, text="70%", width=50)
         self.lbl_train.grid(row=1, column=2, padx=5, pady=5)
 
         # Valid ratio
         ctk.CTkLabel(ratio_frame, text="Valid:").grid(row=2, column=0, padx=10, pady=5, sticky="w")
-        self.slider_val = ctk.CTkSlider(ratio_frame, from_=0, to=100, number_of_steps=100, width=380, command=self._update_ratio_labels)
-        self.slider_val.set(15)
-        self.slider_val.grid(row=2, column=1, padx=10, pady=5)
-        self.lbl_val = ctk.CTkLabel(ratio_frame, text="15%", width=50)
+        self.slider_val = ctk.CTkSlider(ratio_frame, from_=0, to=100, number_of_steps=100, command=self._update_ratio_labels)
+        self.slider_val.set(20)
+        self.slider_val.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
+        self.lbl_val = ctk.CTkLabel(ratio_frame, text="20%", width=50)
         self.lbl_val.grid(row=2, column=2, padx=5, pady=5)
 
         # Test ratio
         ctk.CTkLabel(ratio_frame, text="Test:").grid(row=3, column=0, padx=10, pady=5, sticky="w")
-        self.slider_test = ctk.CTkSlider(ratio_frame, from_=0, to=100, number_of_steps=100, width=380, command=self._update_ratio_labels)
-        self.slider_test.set(5)
-        self.slider_test.grid(row=3, column=1, padx=10, pady=5)
-        self.lbl_test = ctk.CTkLabel(ratio_frame, text="5%", width=50)
+        self.slider_test = ctk.CTkSlider(ratio_frame, from_=0, to=100, number_of_steps=100, command=self._update_ratio_labels)
+        self.slider_test.set(10)
+        self.slider_test.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
+        self.lbl_test = ctk.CTkLabel(ratio_frame, text="10%", width=50)
         self.lbl_test.grid(row=3, column=2, padx=5, pady=5)
 
         # Tùy chọn xáo trộn & Tổng %
-        opt_frame = ctk.CTkFrame(self)
-        opt_frame.pack(padx=20, pady=5, fill="x")
+        opt_frame = ctk.CTkFrame(left_frame)
+        opt_frame.pack(fill="x", pady=5)
 
         self.lbl_total_ratio = ctk.CTkLabel(opt_frame, text="Tổng: 100%", font=ctk.CTkFont(weight="bold"), text_color="#4CAF50")
         self.lbl_total_ratio.pack(side="left", padx=15, pady=8)
@@ -88,26 +127,76 @@ class YOLODatasetSplitterApp(ctk.CTk):
         self.chk_shuffle.pack(side="right", padx=15, pady=8)
 
         # Progress bar & Status
-        self.progress_bar = ctk.CTkProgressBar(self)
-        self.progress_bar.pack(padx=20, pady=(15, 5), fill="x")
+        self.progress_bar = ctk.CTkProgressBar(left_frame)
+        self.progress_bar.pack(fill="x", pady=(8, 3))
         self.progress_bar.set(0)
 
-        self.lbl_status = ctk.CTkLabel(self, text="Trạng thái: Sẵn sàng", text_color="gray70")
-        self.lbl_status.pack(padx=20, pady=(0, 5), anchor="w")
+        self.lbl_status = ctk.CTkLabel(left_frame, text="Trạng thái: Sẵn sàng", text_color="gray70")
+        self.lbl_status.pack(anchor="w", pady=(0, 4))
 
         # Console Logs
-        self.txt_log = ctk.CTkTextbox(self, height=130, font=("Consolas", 12))
-        self.txt_log.pack(padx=20, pady=5, fill="both", expand=True)
+        self.txt_log = ctk.CTkTextbox(left_frame, height=130, font=("Consolas", 12))
+        self.txt_log.pack(fill="both", expand=True, pady=4)
 
         # Button thực thi
         self.btn_run = ctk.CTkButton(
-            self, 
+            left_frame, 
             text="Tạo thư mục & Chia tập dữ liệu", 
             font=ctk.CTkFont(size=15, weight="bold"),
-            height=40,
+            height=42,
             command=self._start_split_thread
         )
-        self.btn_run.pack(padx=20, pady=12, fill="x")
+        self.btn_run.pack(fill="x", pady=(8, 5))
+
+        # ---------------- CỘT PHẢI (THÔNG TIN TÁC GIẢ) ----------------
+        right_frame = ctk.CTkFrame(container, width=280)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0), pady=0)
+        right_frame.pack_propagate(False)
+
+        author_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        author_frame.pack(expand=True, fill="both", padx=15, pady=20)
+
+        # Tiêu đề mục tác giả
+        lbl_author_title = ctk.CTkLabel(
+            author_frame, 
+            text="TÁC GIẢ THỰC HIỆN", 
+            font=ctk.CTkFont(size=14, weight="bold"), 
+            text_color="gray75"
+        )
+        lbl_author_title.pack(pady=(15, 15))
+
+        # Ảnh tác giả tacgia.png
+        img_tacgia = self._load_image("tacgia.png", size=(200, 260))
+        if img_tacgia:
+            lbl_tacgia = ctk.CTkLabel(author_frame, image=img_tacgia, text="")
+        else:
+            lbl_tacgia = ctk.CTkLabel(
+                author_frame, 
+                text="[Ảnh: tacgia.png]", 
+                width=200, 
+                height=260, 
+                fg_color="#2B2B2B", 
+                corner_radius=8
+            )
+        lbl_tacgia.pack(pady=5)
+
+        # Tên tác giả
+        lbl_name = ctk.CTkLabel(
+            author_frame, 
+            text="Hàn Quốc Bảo", 
+            font=ctk.CTkFont(size=20, weight="bold"), 
+            text_color="#1E90FF"
+        )
+        lbl_name.pack(pady=(15, 2))
+
+        # Trường Đại học Lạc Hồng
+        lbl_school = ctk.CTkLabel(
+            author_frame, 
+            text="Đại học Lạc Hồng", 
+            font=ctk.CTkFont(size=15, weight="bold"), 
+            text_color="#FFB300"
+        )
+        lbl_school.pack(pady=(0, 10))
 
     def _browse_src(self):
         path = filedialog.askdirectory(title="Chọn thư mục done_labels")
@@ -147,7 +236,6 @@ class YOLODatasetSplitterApp(ctk.CTk):
         src_dir = self.entry_src.get().strip()
         dest_dir = self.entry_dest.get().strip()
 
-        # Kiểm tra logic input
         if not os.path.isdir(src_dir):
             messagebox.showerror("Lỗi", "Thư mục nguồn không hợp lệ!")
             return
@@ -193,7 +281,6 @@ class YOLODatasetSplitterApp(ctk.CTk):
                 if os.path.splitext(f)[1].lower() in valid_extensions
             ]
 
-            # Kiểm tra tính đồng bộ giữa image và label file
             paired_files = []
             for img_file in all_images:
                 base_name = os.path.splitext(img_file)[0]
@@ -212,15 +299,13 @@ class YOLODatasetSplitterApp(ctk.CTk):
 
             self._log(f"[+] Tìm thấy {total_samples} mẫu dữ liệu hợp lệ.")
 
-            # Xáo trộn danh sách nếu được chọn
             if is_shuffle:
-                random.seed(42)  # Cố định seed nếu muốn tái lặp hoặc bỏ seed để ngẫu nhiên hoàn toàn
+                random.seed(42)
                 random.shuffle(paired_files)
 
-            # Tính toán số lượng theo tỷ lệ
             n_train = int(total_samples * (r_train / 100.0))
             n_val = int(total_samples * (r_val / 100.0))
-            n_test = total_samples - n_train - n_val  # Phần còn lại vào test
+            n_test = total_samples - n_train - n_val
 
             splits = {
                 'train': paired_files[:n_train],
@@ -230,13 +315,11 @@ class YOLODatasetSplitterApp(ctk.CTk):
 
             self._log(f"[+] Phân chia: Train = {len(splits['train'])}, Valid = {len(splits['valid'])}, Test = {len(splits['test'])}")
 
-            # Tạo cấu trúc thư mục train_yolo_data
             target_root = os.path.join(dest_dir, "train_yolo_data")
             for split_name in ['train', 'valid', 'test']:
                 os.makedirs(os.path.join(target_root, split_name, "images"), exist_ok=True)
                 os.makedirs(os.path.join(target_root, split_name, "labels"), exist_ok=True)
 
-            # Sao chép file vào từng tập
             copied_count = 0
             for split_name, files in splits.items():
                 split_img_dir = os.path.join(target_root, split_name, "images")
@@ -251,7 +334,6 @@ class YOLODatasetSplitterApp(ctk.CTk):
                     self.progress_bar.set(progress)
                     self.lbl_status.configure(text=f"Đang sao chép ({split_name}): {copied_count}/{total_samples}")
 
-            # Đọc hoặc tạo data.yaml
             src_yaml = os.path.join(src_dir, "data.yaml")
             nc = 0
             names = []
@@ -263,7 +345,6 @@ class YOLODatasetSplitterApp(ctk.CTk):
                         nc = loaded_data.get("nc", 0)
                         names = loaded_data.get("names", [])
 
-            # Cấu trúc file data.yaml chuẩn YOLO (sử dụng đường dẫn tương đối từ vị trí file data.yaml)
             new_yaml_data = {
                 "train": "./train/images",
                 "val": "./valid/images",

@@ -6,9 +6,20 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox, Canvas
 from PIL import Image, ImageTk
 from ultralytics import YOLO
+import sys
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
+    
+
+def resource_path(relative_path):
+    """Lấy đường dẫn tuyệt đối đến tài nguyên, hỗ trợ cả khi chạy dev và qua PyInstaller."""
+    try:
+        # PyInstaller tạo ra một thư mục tạm và lưu đường dẫn tại _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 
 class AnnotationEditor(ctk.CTkToplevel):
@@ -16,24 +27,22 @@ class AnnotationEditor(ctk.CTkToplevel):
     def __init__(self, parent, done_dir, class_names):
         super().__init__(parent)
         self.title("YOLO Annotation Editor & Reviewer")
-        self.geometry("1150x780")
+        self.geometry("1280x820")
         
         self.done_dir = done_dir
         self.images_dir = os.path.join(done_dir, "images")
         self.labels_dir = os.path.join(done_dir, "labels")
         self.class_names = class_names
         
-        # Lấy danh sách ảnh
         valid_exts = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
         self.image_files = sorted([
             f for f in os.listdir(self.images_dir)
             if os.path.splitext(f)[1].lower() in valid_exts
-        ])
+        ]) if os.path.exists(self.images_dir) else []
         
         self.current_idx = 0
         self.pending_annotations = {}
         
-        # Dữ liệu ảnh hiện tại
         self.orig_img = None
         self.display_img = None
         self.tk_img = None
@@ -44,58 +53,51 @@ class AnnotationEditor(ctk.CTkToplevel):
         self.offset_x = 0
         self.offset_y = 0
         
-        # Danh sách box: mỗi item là dict: {'cls': int, 'x1': float, 'y1': float, 'x2': float, 'y2': float} (tọa độ hiển thị trên canvas)
         self.boxes = []
         self.selected_box_idx = None
         
-        # Trạng thái chuột
-        self.drag_mode = None  # 'move', 'resize', 'create'
+        self.drag_mode = None
         self.active_handle = None
         self.drag_start_x = 0
         self.drag_start_y = 0
         self.HANDLE_SIZE = 8
         
-        # Bảng màu cho từng class
         self.colors = ["#00FF66", "#FF3366", "#3399FF", "#FFCC00", "#FF66FF", "#00FFFF"]
         
         self._setup_ui()
         self._load_current_image()
 
     def _setup_ui(self):
-        # Thanh điều hướng phía trên
         top_bar = ctk.CTkFrame(self)
         top_bar.pack(fill="x", padx=10, pady=5)
         
-        self.btn_prev = ctk.CTkButton(top_bar, text="◀ Ảnh trước", width=110, command=self._prev_image)
-        self.btn_prev.pack(side="left", padx=5, pady=5)
+        self.btn_prev = ctk.CTkButton(top_bar, text="◀ Trước", width=80, command=self._prev_image)
+        self.btn_prev.pack(side="left", padx=(5, 2), pady=5)
         
-        self.lbl_counter = ctk.CTkLabel(top_bar, text="0 / 0", font=ctk.CTkFont(size=14, weight="bold"))
-        self.lbl_counter.pack(side="left", padx=15)
+        self.lbl_counter = ctk.CTkLabel(top_bar, text="0 / 0", width=70, font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_counter.pack(side="left", padx=5)
         
-        self.btn_next = ctk.CTkButton(top_bar, text="Ảnh sau ▶", width=110, command=self._next_image)
-        self.btn_next.pack(side="left", padx=5, pady=5)
+        self.btn_next = ctk.CTkButton(top_bar, text="Sau ▶", width=80, command=self._next_image)
+        self.btn_next.pack(side="left", padx=(2, 10), pady=5)
         
-        # Controls gán class & thao tác box
-        ctk.CTkLabel(top_bar, text="Class vẽ mới:").pack(side="left", padx=(25, 5))
-        self.cmb_class = ctk.CTkComboBox(top_bar, values=self.class_names, width=140)
+        ctk.CTkLabel(top_bar, text="Class:").pack(side="left", padx=(5, 5))
+        self.cmb_class = ctk.CTkComboBox(top_bar, values=self.class_names, width=130)
         if self.class_names:
             self.cmb_class.set(self.class_names[0])
         self.cmb_class.pack(side="left", padx=5)
         
-        self.btn_del = ctk.CTkButton(top_bar, text="Xóa Box (Del)", fg_color="#D32F2F", hover_color="#9A0007", width=110, command=self._delete_selected_box)
-        self.btn_del.pack(side="left", padx=15)
+        self.btn_del = ctk.CTkButton(top_bar, text="Xóa Box (Del)", fg_color="#D32F2F", hover_color="#9A0007", width=100, command=self._delete_selected_box)
+        self.btn_del.pack(side="left", padx=10)
         
-        self.btn_save = ctk.CTkButton(top_bar, text="💾 Xác nhận & Lưu tất cả", fg_color="#2E7D32", hover_color="#1B5E20", width=160, command=self._save_all_annotations)
+        self.btn_save = ctk.CTkButton(top_bar, text="💾 Lưu tất cả", fg_color="#2E7D32", hover_color="#1B5E20", width=130, command=self._save_all_annotations)
         self.btn_save.pack(side="right", padx=10)
 
-        # Canvas vẽ ảnh và box
         self.canvas_frame = ctk.CTkFrame(self)
         self.canvas_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
         self.canvas = Canvas(self.canvas_frame, bg="#1E1E1E", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
 
-        # Binds chuột và bàn phím
         self.canvas.bind("<ButtonPress-1>", self._on_mouse_down)
         self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
@@ -110,13 +112,15 @@ class AnnotationEditor(ctk.CTkToplevel):
             return
             
         file_name = self.image_files[self.current_idx]
-        self.lbl_counter.configure(text=f"[{self.current_idx + 1}/{len(self.image_files)}] - {file_name}")
+        total_files = len(self.image_files)
+        
+        self.lbl_counter.configure(text=f"{self.current_idx + 1} / {total_files}")
+        self.title(f"YOLO Editor & Reviewer - [{self.current_idx + 1}/{total_files}] {file_name}")
         
         img_path = os.path.join(self.images_dir, file_name)
         self.orig_img = Image.open(img_path)
         self.img_w, self.img_h = self.orig_img.size
         
-        # Đọc nhãn tương ứng từ file .txt
         base_name = os.path.splitext(file_name)[0]
         label_path = os.path.join(self.labels_dir, f"{base_name}.txt")
         
@@ -129,7 +133,6 @@ class AnnotationEditor(ctk.CTkToplevel):
                     if len(parts) == 5:
                         cls_id = int(parts[0])
                         xc, yc, w, h = map(float, parts[1:])
-                        # Đổi từ normalized xywh sang normalized x1y1x2y2
                         x1 = xc - w / 2.0
                         y1 = yc - h / 2.0
                         x2 = xc + w / 2.0
@@ -154,7 +157,6 @@ class AnnotationEditor(ctk.CTkToplevel):
         if canv_w <= 10 or canv_h <= 10:
             canv_w, canv_h = 1000, 650
 
-        # Tính scale giữ tỉ lệ khung hình (Aspect Ratio)
         ratio = min(canv_w / self.img_w, canv_h / self.img_h)
         new_w = int(self.img_w * ratio)
         new_h = int(self.img_h * ratio)
@@ -164,12 +166,10 @@ class AnnotationEditor(ctk.CTkToplevel):
         self.offset_x = (canv_w - new_w) // 2
         self.offset_y = (canv_h - new_h) // 2
 
-        # Vẽ background ảnh
         resized = self.orig_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         self.tk_img = ImageTk.PhotoImage(resized)
         self.canvas.create_image(self.offset_x, self.offset_y, anchor="nw", image=self.tk_img)
 
-        # Chuyển đổi normalized coords sang pixel coords trên canvas
         self.boxes = []
         for item in self.raw_boxes:
             nx1, ny1, nx2, ny2 = item['norm_coords']
@@ -191,7 +191,6 @@ class AnnotationEditor(ctk.CTkToplevel):
             is_selected = (idx == self.selected_box_idx)
             outline_w = 3 if is_selected else 2
 
-            # Vẽ bounding box
             self.canvas.create_rectangle(
                 x1, y1, x2, y2, 
                 outline=color, 
@@ -199,7 +198,6 @@ class AnnotationEditor(ctk.CTkToplevel):
                 tags="box_element"
             )
 
-            # Vẽ label tag
             cls_name = self.class_names[cls_id] if cls_id < len(self.class_names) else f"ID_{cls_id}"
             tag_text = f" {cls_name} "
             self.canvas.create_rectangle(
@@ -217,7 +215,6 @@ class AnnotationEditor(ctk.CTkToplevel):
                 tags="box_element"
             )
 
-            # Vẽ handles ở 4 góc nếu đang được chọn để kéo resize
             if is_selected:
                 hs = self.HANDLE_SIZE
                 corners = [(x1, y1), (x2, y1), (x1, y2), (x2, y2)]
@@ -230,7 +227,6 @@ class AnnotationEditor(ctk.CTkToplevel):
                     )
 
     def _get_hit_handle(self, box, x, y):
-        """Kiểm tra chuột có đang trỏ vào handle để resize không."""
         hs = self.HANDLE_SIZE + 3
         handles = {
             'top_left': (box['x1'], box['y1']),
@@ -248,7 +244,6 @@ class AnnotationEditor(ctk.CTkToplevel):
         self.drag_start_x = x
         self.drag_start_y = y
 
-        # Kiểm tra click vào handle của box đang chọn
         if self.selected_box_idx is not None:
             active_box = self.boxes[self.selected_box_idx]
             handle = self._get_hit_handle(active_box, x, y)
@@ -257,7 +252,6 @@ class AnnotationEditor(ctk.CTkToplevel):
                 self.active_handle = handle
                 return
 
-        # Kiểm tra click chọn box bất kỳ
         clicked_box_idx = None
         for idx in reversed(range(len(self.boxes))):
             b = self.boxes[idx]
@@ -273,7 +267,6 @@ class AnnotationEditor(ctk.CTkToplevel):
             self._draw_boxes()
             return
 
-        # Click ra vùng trống -> Tạo nhãn mới
         self.selected_box_idx = None
         current_cls_name = self.cmb_class.get()
         cls_id = self.class_names.index(current_cls_name) if current_cls_name in self.class_names else 0
@@ -320,11 +313,9 @@ class AnnotationEditor(ctk.CTkToplevel):
     def _on_mouse_up(self, event):
         if self.selected_box_idx is not None:
             b = self.boxes[self.selected_box_idx]
-            # Chuẩn hóa thứ tự toạ độ x1 < x2, y1 < y2
             x1, x2 = min(b['x1'], b['x2']), max(b['x1'], b['x2'])
             y1, y2 = min(b['y1'], b['y2']), max(b['y1'], b['y2'])
             
-            # Lọc bỏ nếu box quá nhỏ (do vô tình click)
             if (x2 - x1) < 5 or (y2 - y1) < 5:
                 self.boxes.pop(self.selected_box_idx)
                 self.selected_box_idx = None
@@ -337,7 +328,6 @@ class AnnotationEditor(ctk.CTkToplevel):
         self._draw_boxes()
 
     def _sync_back_to_raw(self):
-        """Chuyển đổi toạ độ canvas sang normalized YOLO coords."""
         self.raw_boxes = []
         for b in self.boxes:
             nx1 = max(0.0, min(1.0, (b['x1'] - self.offset_x) / self.scale_x))
@@ -417,70 +407,153 @@ class YOLOLabelingApp(ctk.CTk):
         super().__init__()
 
         self.title("YOLO Auto-Labeling Studio")
-        self.geometry("740x650")
-        self.resizable(False, False)
+        self.geometry("1080x720")
+        self.resizable(True, True)
 
         self.is_processing = False
         self._setup_ui()
 
+    def _load_image(self, file_name, size):
+        """Hàm phụ trợ load ảnh CTkImage an toàn."""
+        # Chuyển đổi tên file sang đường dẫn thực tế bằng resource_path
+        full_path = resource_path(file_name)
+        
+        # Nếu không thấy trong thư mục đóng gói thì tìm thử ở thư mục hiện tại
+        if not os.path.exists(full_path):
+            full_path = file_name
+
+        if os.path.exists(full_path):
+            try:
+                pil_img = Image.open(full_path)
+                return ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=size)
+            except Exception as e:
+                print(f"Lỗi load ảnh {full_path}: {e}")
+        return None
+
     def _setup_ui(self):
+        # Header Tiêu đề
         title_label = ctk.CTkLabel(
             self, 
-            text="YOLO Auto-Labeling Studio", 
+            text="HỆ THỐNG GÁN NHÃN DỮ LIỆU TỰ ĐỘNG - YOLO AUTO-LABELING", 
             font=ctk.CTkFont(size=22, weight="bold")
         )
-        title_label.pack(padx=20, pady=(20, 10))
+        title_label.pack(padx=20, pady=(15, 10))
 
-        file_frame = ctk.CTkFrame(self)
-        file_frame.pack(padx=20, pady=10, fill="x")
+        # Main Container chia 2 cột: Trái (Thao tác/Log), Phải (Tác giả)
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=15, pady=5)
+
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_columnconfigure(1, weight=0)
+        container.grid_rowconfigure(0, weight=1)
+
+        # ---------------- CỘT TRÁI ----------------
+        left_frame = ctk.CTkFrame(container)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=5)
+
+        # Frame chọn đường dẫn
+        file_frame = ctk.CTkFrame(left_frame)
+        file_frame.pack(padx=15, pady=10, fill="x")
+        file_frame.grid_columnconfigure(1, weight=1)
 
         # 1. Model Selection
         ctk.CTkLabel(file_frame, text="YOLO Model (.pt):", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=8, sticky="w")
-        self.entry_model = ctk.CTkEntry(file_frame, width=440, placeholder_text="Đường dẫn file checkpoint .pt...")
-        self.entry_model.grid(row=0, column=1, padx=5, pady=8)
-        ctk.CTkButton(file_frame, text="Duyệt", width=80, command=self._browse_model).grid(row=0, column=2, padx=10, pady=8)
+        self.entry_model = ctk.CTkEntry(file_frame, placeholder_text="Đường dẫn file checkpoint .pt...")
+        self.entry_model.grid(row=0, column=1, padx=5, pady=8, sticky="ew")
+        ctk.CTkButton(file_frame, text="Duyệt", width=75, command=self._browse_model).grid(row=0, column=2, padx=10, pady=8)
 
         # 2. Input Images Directory
         ctk.CTkLabel(file_frame, text="Thư mục ảnh gốc:", font=ctk.CTkFont(weight="bold")).grid(row=1, column=0, padx=10, pady=8, sticky="w")
-        self.entry_input = ctk.CTkEntry(file_frame, width=440, placeholder_text="Thư mục chứa toàn bộ ảnh thô...")
-        self.entry_input.grid(row=1, column=1, padx=5, pady=8)
-        ctk.CTkButton(file_frame, text="Duyệt", width=80, command=self._browse_input).grid(row=1, column=2, padx=10, pady=8)
+        self.entry_input = ctk.CTkEntry(file_frame, placeholder_text="Thư mục chứa toàn bộ ảnh thô...")
+        self.entry_input.grid(row=1, column=1, padx=5, pady=8, sticky="ew")
+        ctk.CTkButton(file_frame, text="Duyệt", width=75, command=self._browse_input).grid(row=1, column=2, padx=10, pady=8)
 
         # 3. Output Destination
         ctk.CTkLabel(file_frame, text="Thư mục lưu kết quả:", font=ctk.CTkFont(weight="bold")).grid(row=2, column=0, padx=10, pady=8, sticky="w")
-        self.entry_output = ctk.CTkEntry(file_frame, width=440, placeholder_text="Thư mục sẽ chứa folder done_labels...")
-        self.entry_output.grid(row=2, column=1, padx=5, pady=8)
-        ctk.CTkButton(file_frame, text="Duyệt", width=80, command=self._browse_output).grid(row=2, column=2, padx=10, pady=8)
+        self.entry_output = ctk.CTkEntry(file_frame, placeholder_text="Thư mục sẽ chứa folder done_labels...")
+        self.entry_output.grid(row=2, column=1, padx=5, pady=8, sticky="ew")
+        ctk.CTkButton(file_frame, text="Duyệt", width=75, command=self._browse_output).grid(row=2, column=2, padx=10, pady=8)
 
-        param_frame = ctk.CTkFrame(self)
-        param_frame.pack(padx=20, pady=10, fill="x")
+        # Thanh cấu hình ngưỡng
+        param_frame = ctk.CTkFrame(left_frame)
+        param_frame.pack(padx=15, pady=5, fill="x")
 
-        ctk.CTkLabel(param_frame, text="Confidence Threshold:").grid(row=0, column=0, padx=15, pady=10, sticky="w")
-        self.slider_conf = ctk.CTkSlider(param_frame, from_=0.05, to=1.0, number_of_steps=19, width=300)
+        ctk.CTkLabel(param_frame, text="Confidence Threshold:").grid(row=0, column=0, padx=15, pady=8, sticky="w")
+        self.slider_conf = ctk.CTkSlider(param_frame, from_=0.05, to=1.0, number_of_steps=19, width=280)
         self.slider_conf.set(0.25)
-        self.slider_conf.grid(row=0, column=1, padx=10, pady=10)
-        self.lbl_conf_val = ctk.CTkLabel(param_frame, text="0.25")
-        self.lbl_conf_val.grid(row=0, column=2, padx=10, pady=10)
+        self.slider_conf.grid(row=0, column=1, padx=10, pady=8)
+        self.lbl_conf_val = ctk.CTkLabel(param_frame, text="0.25", font=ctk.CTkFont(weight="bold"))
+        self.lbl_conf_val.grid(row=0, column=2, padx=10, pady=8)
         self.slider_conf.configure(command=lambda val: self.lbl_conf_val.configure(text=f"{val:.2f}"))
 
-        self.progress_bar = ctk.CTkProgressBar(self)
-        self.progress_bar.pack(padx=20, pady=(15, 5), fill="x")
+        self.progress_bar = ctk.CTkProgressBar(left_frame)
+        self.progress_bar.pack(padx=15, pady=(10, 4), fill="x")
         self.progress_bar.set(0)
 
-        self.lbl_status = ctk.CTkLabel(self, text="Trạng thái: Sẵn sàng", text_color="gray70")
-        self.lbl_status.pack(padx=20, pady=(0, 5), anchor="w")
+        self.lbl_status = ctk.CTkLabel(left_frame, text="Trạng thái: Sẵn sàng", text_color="gray70")
+        self.lbl_status.pack(padx=15, pady=(0, 4), anchor="w")
 
-        self.txt_log = ctk.CTkTextbox(self, height=140, font=("Consolas", 12))
-        self.txt_log.pack(padx=20, pady=5, fill="both", expand=True)
+        self.txt_log = ctk.CTkTextbox(left_frame, height=130, font=("Consolas", 12))
+        self.txt_log.pack(padx=15, pady=5, fill="both", expand=True)
 
         self.btn_run = ctk.CTkButton(
-            self, 
+            left_frame, 
             text="Bắt đầu gán nhãn tự động", 
             font=ctk.CTkFont(size=15, weight="bold"),
-            height=40,
+            height=42,
             command=self._start_processing_thread
         )
-        self.btn_run.pack(padx=20, pady=15, fill="x")
+        self.btn_run.pack(padx=15, pady=12, fill="x")
+
+        # ---------------- CỘT PHẢI ----------------
+        right_frame = ctk.CTkFrame(container, width=280)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0), pady=5)
+        right_frame.pack_propagate(False)
+
+        author_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        author_frame.pack(expand=True, fill="both", padx=15, pady=20)
+
+        # Tiêu đề mục tác giả
+        lbl_author_title = ctk.CTkLabel(
+            author_frame, 
+            text="TÁC GIẢ THỰC HIỆN", 
+            font=ctk.CTkFont(size=14, weight="bold"), 
+            text_color="gray75"
+        )
+        lbl_author_title.pack(pady=(10, 15))
+
+        # Ảnh tác giả
+        img_tacgia = self._load_image("tacgia.png", size=(200, 260))
+        if img_tacgia:
+            lbl_tacgia = ctk.CTkLabel(author_frame, image=img_tacgia, text="")
+        else:
+            lbl_tacgia = ctk.CTkLabel(
+                author_frame, 
+                text="[Ảnh: tacgia.png]", 
+                width=200, 
+                height=260, 
+                fg_color="#2B2B2B", 
+                corner_radius=8
+            )
+        lbl_tacgia.pack(pady=5)
+
+        # Tên tác giả
+        lbl_name = ctk.CTkLabel(
+            author_frame, 
+            text="Hàn Quốc Bảo", 
+            font=ctk.CTkFont(size=20, weight="bold"), 
+            text_color="#1E90FF"
+        )
+        lbl_name.pack(pady=(15, 2))
+
+        # Đơn vị / Trường học
+        lbl_school = ctk.CTkLabel(
+            author_frame, 
+            text="Đại học Lạc Hồng", 
+            font=ctk.CTkFont(size=15, weight="bold"), 
+            text_color="#FFB300"
+        )
+        lbl_school.pack(pady=(0, 10))
 
     def _browse_model(self):
         path = filedialog.askopenfilename(filetypes=[("YOLO Weights", "*.pt")])
@@ -570,11 +643,9 @@ class YOLOLabelingApp(ctk.CTk):
                 results = model.predict(source=img_path, conf=conf_thresh, verbose=False)
                 result = results[0]
 
-                # Copy ảnh vào done_labels/images
                 dest_img_path = os.path.join(images_dir, file_name)
                 shutil.copy2(img_path, dest_img_path)
 
-                # Lưu nhãn vào done_labels/labels
                 base_name = os.path.splitext(file_name)[0]
                 label_path = os.path.join(labels_dir, f"{base_name}.txt")
 
@@ -594,7 +665,6 @@ class YOLOLabelingApp(ctk.CTk):
                 self.progress_bar.set(progress)
                 self.lbl_status.configure(text=f"Đang xử lý: {idx + 1}/{total} ({file_name})")
 
-            # Tạo file data.yaml
             yaml_path = os.path.join(base_done_dir, "data.yaml")
             yaml_data = {
                 "train": "../train/images",
@@ -610,7 +680,6 @@ class YOLOLabelingApp(ctk.CTk):
             self._log(f"[✓] Đã tạo file: {yaml_path}")
             self._log(f"[✓] Auto-label hoàn tất {total} ảnh.")
 
-            # Mở cửa sổ chỉnh sửa trên Main Thread
             self.after(200, lambda: self._open_editor(base_done_dir, class_names))
 
         except Exception as e:
